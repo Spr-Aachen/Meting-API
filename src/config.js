@@ -1,7 +1,3 @@
-import dotenv from 'dotenv'
-
-dotenv.config()
-
 const toBoolean = value => {
   if (value === undefined) return false
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase())

@@ -1,13 +1,13 @@
-FROM node:22-alpine
+FROM oven/bun:latest
 
-ARG NODE_ENV
-ENV NODE_ENV=${NODE_ENV:-production}
+ENV NODE_ENV=production
 
 WORKDIR /app
 
-COPY . /app
+COPY package.json bun.lockb* ./
+RUN bun install --production
 
-RUN yarn
+COPY . .
 
 EXPOSE 80 443
-ENTRYPOINT ["node", "src/index.js"]
+ENTRYPOINT ["bun", "run", "src/index.js"]

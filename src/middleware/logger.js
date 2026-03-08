@@ -9,49 +9,71 @@ const logger = pino({
 
 const generateRequestId = () => Math.random().toString(36).substring(7)
 
-const requestLogger = async (c, next) => {
-  const requestId = generateRequestId()
-  const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now()
+const withRequestLogger = (handler) => {
+  return async (request) => {
+    const requestId = generateRequestId()
+    const startTime = performance.now()
+    const url = new URL(request.url)
 
-  const requestHeaders = c.req.header()
-  const request = {
-    method: c.req.method,
-    url: c.req.path,
-    headers: requestHeaders
+    const reqInfo = {
+      method: request.method,
+      url: url.pathname,
+      headers: Object.fromEntries(request.headers)
+    }
+
+    const requestScopedLogger = logger.child({ req: reqInfo })
+
+    // 构建上下文对象
+    const ctx = {
+      logger: requestScopedLogger,
+      requestId,
+      responseHeaders: new Headers(),
+      error: null
+    }
+
+    // 执行实际的处理逻辑
+    let response = await handler(request, ctx)
+
+    // 将 ctx.responseHeaders 合并到 response 中
+    const mergedHeaders = new Headers(response.headers)
+    for (const [key, value] of ctx.responseHeaders) {
+      mergedHeaders.set(key, value)
+    }
+    mergedHeaders.set('x-request-id', requestId)
+
+    response = new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: mergedHeaders
+    })
+
+    // 记录响应日志
+    const responseTime = Math.round(performance.now() - startTime)
+
+    const responseHeaders = {}
+    for (const [key, value] of response.headers.entries()) {
+      responseHeaders[key] = value
+    }
+
+    const bindings = {
+      reqId: requestId,
+      res: {
+        status: response.status,
+        headers: responseHeaders
+      },
+      responseTime
+    }
+
+    const level = ctx.error ? 'error' : 'info'
+    const message = ctx.error?.message || 'Request completed'
+
+    requestScopedLogger[level](bindings, message)
+
+    return response
   }
-
-  const requestScopedLogger = logger.child({ req: request })
-
-  c.set('logger', requestScopedLogger)
-  c.set('requestId', requestId)
-  c.header('x-request-id', requestId)
-
-  await next()
-
-  const endTime = typeof performance !== 'undefined' ? performance.now() : Date.now()
-  const responseTime = Math.round(endTime - startTime)
-
-  const responseHeaders = {}
-  for (const [key, value] of c.res.headers.entries()) {
-    responseHeaders[key] = value
-  }
-
-  const bindings = {
-    reqId: requestId,
-    res: {
-      status: c.res.status,
-      headers: responseHeaders
-    },
-    responseTime
-  }
-
-  const level = c.error ? 'error' : 'info'
-  const message = c.error?.message || 'Request completed'
-
-  requestScopedLogger[level](bindings, message)
 }
 
 export {
-  requestLogger,
+  withRequestLogger,
   logger
 }

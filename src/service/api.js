@@ -1,6 +1,6 @@
 import Meting from '@meting/core'
-import hashjs from 'hash.js'
-import { HTTPException } from 'hono/http-exception'
+import { createHmac } from 'node:crypto'
+import { HTTPException } from '../utils/http-exception.js'
 import config from '../config.js'
 import { format as lyricFormat } from '../utils/lyric.js'
 import { readCookieFile, isAllowedHost } from '../utils/cookie.js'
@@ -21,9 +21,10 @@ const METING_METHODS = {
   pic: 'pic'
 }
 
-export default async (c) => {
+export default async (request, ctx) => {
   // 1. 初始化参数
-  const query = c.req.query()
+  const url = new URL(request.url)
+  const query = Object.fromEntries(url.searchParams)
   const server = query.server || 'netease'
   const type = query.type || 'search'
   const id = query.id || 'hello'
@@ -48,12 +49,12 @@ export default async (c) => {
   const cacheKey = `${server}/${type}/${id}`
   let data = cache.get(cacheKey)
   if (data === undefined) {
-    c.header('x-cache', 'miss')
+    ctx.responseHeaders.set('x-cache', 'miss')
     const meting = new Meting(server)
     meting.format(true)
 
     // 检查 referrer 并配置 cookie
-    const referrer = c.req.header('referer')
+    const referrer = request.headers.get('referer')
     if (isAllowedHost(referrer)) {
       const cookie = await readCookieFile(server)
       if (cookie) {
@@ -83,7 +84,7 @@ export default async (c) => {
     let url = data.url
     // 空结果返回 404
     if (!url) {
-      return c.body(null, 404)
+      return new Response(null, { status: 404 })
     }
     // 链接转换
     if (server === 'netease') {
@@ -106,23 +107,25 @@ export default async (c) => {
       url = url
         .replace('http://zhangmenshiting.qianqian.com', 'https://gss3.baidu.com/y0s1hSulBw92lNKgpU_Z2jR7b2w6buu')
     }
-    return c.redirect(url)
+    return new Response(null, { status: 302, headers: { location: url } })
   }
 
   if (type === 'pic') {
     const url = data.url
     // 空结果返回 404
     if (!url) {
-      return c.body(null, 404)
+      return new Response(null, { status: 404 })
     }
-    return c.redirect(url)
+    return new Response(null, { status: 302, headers: { location: url } })
   }
 
   if (type === 'lrc') {
-    return c.text(lyricFormat(data.lyric, data.tlyric || ''))
+    return new Response(lyricFormat(data.lyric, data.tlyric || ''), {
+      headers: { 'content-type': 'text/plain; charset=utf-8' }
+    })
   }
 
-  return c.json(data.map(x => {
+  return Response.json(data.map(x => {
     return {
       title: x.name,
       author: x.artist.join(' / '),
@@ -134,5 +137,5 @@ export default async (c) => {
 }
 
 const auth = (server, type, id) => {
-  return hashjs.hmac(hashjs.sha1, config.meting.token).update(`${server}${type}${id}`).digest('hex')
+  return createHmac('sha1', config.meting.token).update(`${server}${type}${id}`).digest('hex')
 }
